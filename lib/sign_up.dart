@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:login_app/components/contact_tile.dart';
 import 'package:login_app/resources/strings.dart';
+import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
 
 class SignUp extends StatefulWidget {
   const SignUp({
@@ -20,6 +22,7 @@ class _SignUpState extends State<SignUp> {
   final birthDateFocusNode = FocusNode();
   final phoneFocusNode = FocusNode();
   final termsFocusNode = FocusNode(descendantsAreFocusable: false);
+  final userNameFocusNode = FocusNode();
 
   bool obscureText = true;
   DateTime? selectedBirthDate;
@@ -29,6 +32,10 @@ class _SignUpState extends State<SignUp> {
 
   final emailRegex = RegExp(
       r"[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?");
+  final phoneMask = MaskTextInputFormatter(
+    mask: '(##) #####-####',
+    filter: {'#': RegExp(r'[0-9]')},
+  );
 
   @override
   void initState() {
@@ -37,8 +44,8 @@ class _SignUpState extends State<SignUp> {
         FocusHighlightStrategy.alwaysTraditional;
   }
 
-  void showSignUpDialog() {
-    showDialog(
+  void showSignUpDialog(BuildContext context) {
+    showDialog<bool>(
       context: context,
       builder: (context) {
         return AlertDialog(
@@ -46,17 +53,30 @@ class _SignUpState extends State<SignUp> {
           content: const Text(Strings.confirmationMessage),
           actions: [
             TextButton(
-              onPressed: Navigator.of(context).pop,
+              onPressed: () => Navigator.of(context).pop(false),
               child: const Text('Não'),
             ),
             TextButton(
-              onPressed: Navigator.of(context).pop,
+              onPressed: () => Navigator.of(context).pop(true),
               child: const Text('Sim'),
             )
           ],
         );
       },
-    );
+    ).then((confirmedSignUp) {
+      if (confirmedSignUp != null && confirmedSignUp) {
+        emailChecked = true;
+        phoneChecked = true;
+        acceptedTerms = false;
+
+        Form.of(context)?.reset();
+        birthDateController.clear();
+        userNameFocusNode.requestFocus();
+
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text(Strings.userSignedUp)));
+      }
+    });
   }
 
   void showBirthDatePicker() {
@@ -109,6 +129,7 @@ class _SignUpState extends State<SignUp> {
             children: [
               buildHeader(Strings.accessData),
               TextFormField(
+                focusNode: userNameFocusNode,
                 autofocus: true,
                 decoration: buildInputDecoration(Strings.userName),
                 textInputAction: TextInputAction.next,
@@ -127,6 +148,7 @@ class _SignUpState extends State<SignUp> {
               TextFormField(
                 obscureText: obscureText,
                 decoration: buildInputDecoration(Strings.password).copyWith(
+                  helperText: Strings.passwordHelper,
                   suffixIcon: ExcludeFocus(
                     child: IconButton(
                       icon: Icon(
@@ -138,13 +160,18 @@ class _SignUpState extends State<SignUp> {
                     ),
                   ),
                 ),
+                inputFormatters: [LengthLimitingTextInputFormatter(16)],
                 textInputAction: TextInputAction.next,
+                autovalidateMode: AutovalidateMode.onUserInteraction,
+                validator: passwordValidator,
               ),
               const SizedBox(height: 18.0),
               buildHeader(Strings.personalInformation),
               TextFormField(
                 decoration: buildInputDecoration(Strings.fullName),
                 textInputAction: TextInputAction.next,
+                autovalidateMode: AutovalidateMode.onUserInteraction,
+                validator: fullNameValidator,
               ),
               const SizedBox(height: 10.0),
               Row(
@@ -168,6 +195,8 @@ class _SignUpState extends State<SignUp> {
                         textInputAction: TextInputAction.next,
                         keyboardType: TextInputType.number,
                         onTap: showBirthDatePicker,
+                        validator: emptyValidator,
+                        autovalidateMode: AutovalidateMode.onUserInteraction,
                       ),
                     ),
                   ),
@@ -179,6 +208,9 @@ class _SignUpState extends State<SignUp> {
                       decoration: buildInputDecoration(Strings.phone),
                       textInputAction: TextInputAction.next,
                       keyboardType: TextInputType.phone,
+                      inputFormatters: [phoneMask],
+                      autovalidateMode: AutovalidateMode.onUserInteraction,
+                      validator: phoneValidator,
                     ),
                   ),
                 ],
@@ -201,20 +233,43 @@ class _SignUpState extends State<SignUp> {
                   phoneChecked = value!;
                 }),
               ),
-              SwitchListTile(
-                focusNode: termsFocusNode,
-                title: Text(Strings.termsMessage,
-                    style: theme.textTheme.subtitle2),
-                value: acceptedTerms,
-                contentPadding: const EdgeInsets.only(right: 8.0),
-                onChanged: (value) => setState(() {
-                  acceptedTerms = value;
-                }),
+              FormField<bool>(
+                validator: (_) {
+                  if (!acceptedTerms) {
+                    return Strings.errorMessageNotAcceptedTerms;
+                  }
+                  return null;
+                },
+                builder: (formFieldState) {
+                  final errorText = formFieldState.errorText;
+                  return SwitchListTile(
+                    focusNode: termsFocusNode,
+                    title: Text(Strings.termsMessage,
+                        style: theme.textTheme.subtitle2),
+                    subtitle: errorText != null
+                        ? Text(errorText,
+                            style: theme.textTheme.bodyText2
+                                ?.copyWith(color: theme.errorColor))
+                        : null,
+                    value: acceptedTerms,
+                    contentPadding: const EdgeInsets.only(right: 8.0),
+                    onChanged: (value) => setState(() {
+                      acceptedTerms = value;
+                    }),
+                  );
+                },
               ),
-              ElevatedButton(
-                onPressed: showSignUpDialog,
-                child: const Text(Strings.signUp),
-              )
+              Builder(builder: (context) {
+                return ElevatedButton(
+                  onPressed: () {
+                    final formState = Form.of(context);
+                    if (formState != null && formState.validate()) {
+                      showSignUpDialog(context);
+                    }
+                  },
+                  child: const Text(Strings.signUp),
+                );
+              })
             ],
           ),
         ),
@@ -222,15 +277,46 @@ class _SignUpState extends State<SignUp> {
     );
   }
 
+  String? phoneValidator(phone) {
+    final emptyError = emptyValidator(phone);
+    if (emptyError == null && phone != null) {
+      final phoneDigits = phoneMask.unmaskText(phone);
+      if (phoneDigits.length < 11) {
+        return Strings.errorMessageInvalidPhone;
+      }
+    }
+    return emptyError;
+  }
+
+  String? fullNameValidator(fullName) {
+    final emptyError = emptyValidator(fullName);
+    if (emptyError == null && fullName != null) {
+      if (fullName.split(' ').length == 1) {
+        return Strings.errorMessageInvalidFullName;
+      }
+    }
+    return emptyError;
+  }
+
+  String? passwordValidator(password) {
+    final emptyError = emptyValidator(password);
+    if (emptyError == null && password != null) {
+      if (password.length < 8) {
+        return Strings.passwordHelper;
+      }
+    }
+    return emptyError;
+  }
+
   String? emailValidator(email) {
-                final emptyError = emptyValidator(email);
-                if (emptyError == null && email != null) {
-                  if (!emailRegex.hasMatch(email)) {
-                    return Strings.errorMessageInvalidEmail;
-                  }
-                }
-                return null;
-              }
+    final emptyError = emptyValidator(email);
+    if (emptyError == null && email != null) {
+      if (!emailRegex.hasMatch(email)) {
+        return Strings.errorMessageInvalidEmail;
+      }
+    }
+    return emptyError;
+  }
 
   String? emptyValidator(String? text) {
     if (text == null || text.isEmpty) {
@@ -245,6 +331,7 @@ class _SignUpState extends State<SignUp> {
     birthDateFocusNode.dispose();
     phoneFocusNode.dispose();
     termsFocusNode.dispose();
+    userNameFocusNode.dispose();
     super.dispose();
   }
 
